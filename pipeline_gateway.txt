@@ -1,0 +1,104 @@
+pipeline {
+    agent any
+
+    environment {
+        SONARCLOUD_URL = 'https://sonarcloud.io'
+        SONARCLOUD_ORGANIZATION = 'discoveryorg'
+        SONARCLOUD_TOKEN = credentials('SonarCloud_token')
+        SONARCLOUD_PROJECT_KEY = 'discoveryorg_gateway-service'
+
+        registryCredential = 'metmari'
+        dockerimagename = "faculty_management-faculty-gateway-service:latest"
+    }
+
+    stages {
+
+        stage('Clone Repository') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/hafsa-mtm/faculty_management_devops.git',
+                    credentialsId: 'Github_token'
+            }
+        }
+
+        stage('Compile') {
+            steps {
+                dir('Gateway-Service') {
+                    bat 'mvn clean compile'
+                }
+            }
+        }
+
+        stage('Test Unitaire') {
+            steps {
+                dir('Gateway-Service') {
+                    bat 'mvn test'
+                }
+            }
+        }
+
+        stage('Code Quality - SonarCloud') {
+            steps {
+                dir('Gateway-Service') {
+                    withEnv(["SONAR_TOKEN=${SONARCLOUD_TOKEN}"]) {
+                        bat """
+                        mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar ^
+                          -Dsonar.projectKey=${SONARCLOUD_PROJECT_KEY} ^
+                          -Dsonar.organization=${SONARCLOUD_ORGANIZATION} ^
+                          -Dsonar.host.url=${SONARCLOUD_URL} ^
+                          -Dsonar.login=${SONARCLOUD_TOKEN} ^
+                          -Djava.net.preferIPv4Stack=true
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Package Jar') {
+            steps {
+                dir('Gateway-Service') {
+                    bat 'mvn clean package -DskipTests'
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                dir('Gateway-Service') {
+                    script {
+                        def dockerImage = docker.build(env.dockerimagename)
+                    }
+                }
+            }
+        }
+
+        stage('Deploying App to Kubernetes') {
+            steps {
+                dir('Gateway-Service') {
+                    script {
+                        kubernetesDeploy(
+                            configs: "Gateway-Deploy.yaml",
+                            kubeconfigId: "Kubernetes"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Build complete. Sending notification..."
+        }
+        success {
+            mail to: 'hafsamitmari@gmail.com',
+                 subject: "Gateway-Service Build #${env.BUILD_NUMBER} Success",
+                 body: "Gateway-Service deployed successfully "
+        }
+        failure {
+            mail to: 'hafsamitmari@gmail.com',
+                 subject: "Gateway-Service Build #${env.BUILD_NUMBER} Failed",
+                 body: "Build failed – please check Jenkins logs."
+        }
+    }
+}

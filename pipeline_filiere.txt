@@ -1,0 +1,104 @@
+pipeline {
+    agent any
+
+    environment {
+        SONARCLOUD_URL = 'https://sonarcloud.io'
+        SONARCLOUD_ORGANIZATION = 'discoveryorg'
+        SONARCLOUD_TOKEN = credentials('SonarCloud_token')
+        SONARCLOUD_PROJECT_KEY = 'discoveryorg_filiere-service'
+
+        registryCredential = 'metmari'
+        dockerimagename = "faculty_management-faculty-filiere-service:latest"
+    }
+
+    stages {
+
+        stage('Clone Repository') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/hafsa-mtm/faculty_management_devops.git',
+                    credentialsId: 'Github_token'
+            }
+        }
+
+        stage('Compile') {
+            steps {
+                dir('Filiere_Service') {
+                    bat 'mvn clean compile'
+                }
+            }
+        }
+
+        stage('Test Unitaire') {
+            steps {
+                dir('Filiere_Service') {
+                    bat 'mvn test'
+                }
+            }
+        }
+
+        stage('Code Quality') {
+            steps {
+                dir('Filiere_Service') {
+                    withEnv(["SONAR_TOKEN=${SONARCLOUD_TOKEN}"]) {
+                        bat '''
+                        mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar ^
+                          -Dsonar.projectKey=%SONARCLOUD_PROJECT_KEY% ^
+                          -Dsonar.organization=%SONARCLOUD_ORGANIZATION% ^
+                          -Dsonar.host.url=%SONARCLOUD_URL% ^
+                          -Dsonar.login=%SONAR_TOKEN% ^
+                          -Djava.net.preferIPv4Stack=true
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Package Jar') {
+            steps {
+                dir('Filiere_Service') {
+                    bat 'mvn clean package -DskipTests'
+                }
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                dir('Filiere_Service') {
+                    script {
+                        docker.build(env.dockerimagename)
+                    }
+                }
+            }
+        }
+
+        stage('Deploying App to Kubernetes') {
+            steps {
+                dir('Filiere_Service') {
+                    script {
+                        kubernetesDeploy(
+                            configs: "Filiere-Deploy.yaml",
+                            kubeconfigId: "Kubernetes"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Build complete."
+        }
+        success {
+            mail to: 'hafsamitmari@gmail.com',
+                 subject: "Filiere-Service Build #${env.BUILD_NUMBER} Success",
+                 body: "The Filiere-Service build succeeded!"
+        }
+        failure {
+            mail to: 'hafsamitmari@gmail.com',
+                 subject: "Filiere-Service Build #${env.BUILD_NUMBER} Failed",
+                 body: "The build failed. Please check Jenkins logs."
+        }
+    }
+}
